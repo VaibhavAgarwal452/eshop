@@ -4,10 +4,13 @@ import prisma from '@packages/libs/prisma';
 
 const isAuthenticated = async (req: any, res: Response, next: NextFunction) => {
   try {
+    console.log('inside isAuthenticadted');
+    debugger;
     const token =
       req.cookies['accessToken'] ||
       req.cookies['seller-access-token'] ||
       req.headers.authorization?.split(' ')[1];
+    console.log('token', token);
     if (!token)
       return res.status(401).json({ message: 'Unathorized! Token Missing' });
 

@@ -58,7 +58,7 @@ const server = app.listen(port, () => {
     initializeConfig();
     console.log('Site config initialized successfully!');
   } catch (err) {
-    console.log('Failed to initiliase sit config');
+    console.log('Failed to initialize site config');
   }
 });
 server.on('error', console.error);

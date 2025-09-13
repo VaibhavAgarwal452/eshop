@@ -2,26 +2,41 @@
 import { useQuery } from '@tanstack/react-query'
 import ImagePlaceHolder from 'apps/seller-ui/src/shared/components/image-placeholder'
 import axiosInstance from 'apps/seller-ui/src/utils/axiosInstance'
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight, Wand, X } from 'lucide-react'
 import ColorSelector from 'packages/components/color-selector'
 import CustomProperties from 'packages/components/custom-properties'
 import CustomSpecifications from 'packages/components/custom-specifications'
 import Input from 'packages/components/input'
 import dynamic from 'next/dynamic'
 import React, { useMemo, useState } from 'react'
-import { Controller, useForm } from 'react-hook-form'
+import { Controller, set, useForm } from 'react-hook-form'
 import SizeSelector from 'packages/components/size-selector'
+import Image from 'next/image'
+import { enhancements } from 'apps/seller-ui/src/utils/AI.Enhancements'
+import axios from 'axios'
+import { useRouter } from 'next/navigation'
+import toast from 'react-hot-toast'
 // In parent or page
 const RichTextEditor = dynamic(() => import('packages/components/rich-text-editor'), {
     ssr: false,
 });
 
+interface UploadedImage {
+    fileId: string;
+    file_url: string;
+}
+
 const CreateProduct = () => {
     const [openImageModal, setOpenImageModal] = useState(false)
     const [isChanged, setIsChanged] = useState(true)
-    const [images, setImages] = useState<(File | null)[]>([null])
+    const [selectedImage, setSelectedImage] = useState("")
+    const [images, setImages] = useState<(UploadedImage | null)[]>([null])
     const [loading, setLoading] = useState(false)
+    const [processing, setProcessing] = useState(false)
+    const [activeEffect, setActiveEffect] = useState("")
+    const [pictureUploadingLoader, setPictureUploadingLoader] = useState(false)
     const { register, control, watch, setValue, handleSubmit, formState: { errors }, } = useForm()
+    const router = useRouter()
 
     const { data, isLoading, isError } = useQuery({
         queryKey: ["categories"],
@@ -29,6 +44,20 @@ const CreateProduct = () => {
             try {
                 const response = await axiosInstance.get("/product/api/get-categories")
                 return response.data
+            } catch (error) {
+                console.error(error)
+            }
+        },
+        staleTime: 1000 * 60 * 5,
+        retry: 2
+    })
+
+    const { data: discountCodes = [], isLoading: DiscountLoading } = useQuery({
+        queryKey: ["shop-discounts"],
+        queryFn: async () => {
+            try {
+                const response = await axiosInstance.get("/product/api/get-discount-codes")
+                return response?.data?.discount_codes || []
             } catch (error) {
                 console.error(error)
             }
@@ -47,43 +76,113 @@ const CreateProduct = () => {
         return selectedCategory ? subCategoriesData[selectedCategory] || [] : []
     }, [selectedCategory, subCategoriesData])
 
-    const onSubmit = (data: any) => {
-        console.log("data", data)
-    }
-
-    const handleImageChange = (file: File | null, index: number) => {
-        const updatedImages = [...images]
-        updatedImages[index] = file
-
-        if (index === images.length - 1 && images.length < 8) {
-            updatedImages.push(null)
+    const onSubmit = async (data: any) => {
+        console.log(data, "daata")
+        try {
+            setLoading(true)
+            // Process tags: convert comma-separated string to array
+            if (data.tags && typeof data.tags === 'string') {
+                data.tags = data.tags.split(',').map((tag: string) => tag.trim()).filter((tag: string) => tag.length > 0);
+            }
+            
+            // Fix field name mismatch for cash on delivery
+            if (data.cash_on_delivery) {
+                data.cashOnDelivery = data.cash_on_delivery;
+                delete data.cash_on_delivery;
+            }
+            
+            await axiosInstance.post("/product/api/create-product", data)
+            router.push("/dashboard/all-products")
+        } catch (error: any) {
+            toast.error(error?.data?.message)
+        } finally {
+            setLoading(false)
         }
-        setImages(updatedImages)
 
-        setValue("images", updatedImages)
+    }
+    const convertFileToBase64 = async (file: File) => {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader()
+            reader.readAsDataURL(file)
+            reader.onload = () => {
+                resolve(reader.result)
+            }
+            reader.onerror = (error) => {
+                reject(error)
+            }
+        })
+    }
+    const handleImageChange = async (file: File | null, index: number) => {
+        if (!file) return;
+        setPictureUploadingLoader(true)
+        try {
+            const fileName = await convertFileToBase64(file)
+            const response = await axiosInstance.post("/product/api/upload-product-image", { fileName })
+
+
+            const uploadedImage: UploadedImage = {
+                fileId: response.data.fileId,
+                file_url: response.data.file_url
+            }
+            const updatedImages = [...images]
+            updatedImages[index] = uploadedImage;
+
+            if (index === images.length - 1 && updatedImages.length < 8) {
+                updatedImages.push(null)
+            }
+            setImages(updatedImages)
+            setValue("images", updatedImages)
+        } catch (err) {
+            console.error(err)
+        } finally {
+            setPictureUploadingLoader(false)
+        }
+
     }
 
-    const handleRemoveImage = (index: number) => {
-        setImages(prevImages => {
-            let updatedImages = [...prevImages]
-            if (index === -1) {
-                updatedImages[0]
-            } else {
-                updatedImages.splice(index, 1)
+    const handleRemoveImage = async (index: number) => {
+
+        try {
+            const updatedImages = [...images]
+            const imageToDelete = updatedImages[index];
+            if (imageToDelete && typeof imageToDelete === "object") {
+                await axiosInstance.delete("/product/api/delete-product-image", { data: { fileId: imageToDelete.fileId! } })
             }
 
+            updatedImages.splice(index, 1)
+
+            // Add null placeholder
             if (!updatedImages.includes(null) && updatedImages.length < 8) {
                 updatedImages.push(null)
             }
-            return updatedImages
 
-        })
-        setValue("images", images)
+            setImages(updatedImages)
+            setValue("images", updatedImages)
+        } catch (err) {
+            console.error(err)
+        }
+
     }
 
+    const applyTransformation = async (transformation: string) => {
+        if (!selectedImage || processing) return;
+        setProcessing(true)
+        setActiveEffect(transformation)
+        console.log("selectedImage", selectedImage, transformation)
+        try {
+            const transformedUrl = `${selectedImage}?tr=${transformation}`
+            setSelectedImage(transformedUrl)
 
+        } catch (error) {
+            console.error("Error applying transformation:", error);
+        }
+        finally {
+            setProcessing(false)
+        }
+    }
     const handleSaveDraft = (draft: any) => { }
-    console.log("images", images)
+
+    console.log(errors, "errors")
     return (
         <form className='w-full mx-auto p-8 shadow-md rounded-lg text-white' onSubmit={handleSubmit(onSubmit)}>
             <h2 className='text-2xl py-2 font-semibold font-Poppins text-white'>
@@ -97,13 +196,16 @@ const CreateProduct = () => {
 
             <div className='py-4 w-full flex gap-6'>
                 <div className='md:w-[35%]'>
-                    {images.length > 0 && <ImagePlaceHolder
+                    {images?.length > 0 && <ImagePlaceHolder
                         setOpenImageModal={setOpenImageModal}
                         size="765 x 850"
                         small={false}
                         index={0}
+                        setSelectedImage={setSelectedImage}
                         onImageChange={handleImageChange}
                         onRemove={handleRemoveImage}
+                        images={images}
+                        pictureUploadingLoader={pictureUploadingLoader}
                     />}
 
                     <div className='grid grid-cols-2 gap-3 mt-4'>
@@ -114,8 +216,11 @@ const CreateProduct = () => {
                                 small
                                 key={index}
                                 index={index + 1}
+                                setSelectedImage={setSelectedImage}
                                 onImageChange={handleImageChange}
                                 onRemove={handleRemoveImage}
+                                images={images}
+                                pictureUploadingLoader={pictureUploadingLoader}
                             />
                         ))}
                     </div>
@@ -140,7 +245,7 @@ const CreateProduct = () => {
                                     cols={10}
                                     label='Short Description *'
                                     placeholder='Enter product description'
-                                    {...register("description", {
+                                    {...register("short_description", {
                                         required: "Description is required",
                                         validate: (value: string) => {
                                             const wordCount = value.trim().split(/\s+/).length;
@@ -299,7 +404,7 @@ const CreateProduct = () => {
                                     Loading Sub Categories...
                                 </p> : (
                                     <Controller
-                                        name="subcategory"
+                                        name="subCategory"
                                         control={control}
                                         rules={{ required: "Sub Category is required" }}
                                         render={({ field }) => (
@@ -353,7 +458,7 @@ const CreateProduct = () => {
                                     placeholder="e.g., https://www.youtube.com/watch?v=dQw4w9WgXcQ"
                                     {...register("video_url", {
                                         pattern: {
-                                            value: /^(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:watch\?(?:.*&)?v=|embed\/|v\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})$/,
+                                            value: /(?:youtube\.com\/.*[?&]v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/,
                                             message: "Invalid YouTube embed URL",
                                         }
                                     })}
@@ -392,7 +497,8 @@ const CreateProduct = () => {
                                         valueAsNumber: true,
                                         min: { value: 1, message: "Sale Price must be greater than 0" },
                                         validate: (value) => {
-                                            if (!isNaN(value)) return "Sale Price must be a number"
+                                            console.log("validating", value, regularPrice)
+                                            if (isNaN(value)) return "Sale Price must be a number"
                                             if (regularPrice && value >= regularPrice) return "Sale Price must be less than regular price"
                                             return true
                                         },
@@ -433,6 +539,22 @@ const CreateProduct = () => {
                                 <label className='block font-semibold text-gray-300 mb-1'>
                                     Select Discount Codes (optional)
                                 </label>
+                                {DiscountLoading ? <p className='text-gray-400'>Loading Discount codes</p> : (
+                                    <div className='flex flex-wrap gap-2'>
+                                        {discountCodes.map((code: any) => (
+                                            <button key={code.id} type="button" className={`px-3 py-1 border rounded-md ${watch("discountCodes")?.includes(code.id) ? "bg-blue-600 text-white" : "bg-gray-600 text-gray-300"}`}
+                                                onClick={() => {
+                                                    const currentSelection = watch("discountCodes") || [];
+                                                    const updatedSelection = currentSelection?.includes(code.id) ? currentSelection.filter((id: string) => id !== code.id) : [...currentSelection, code.id]
+                                                    setValue("discountCodes", updatedSelection)
+                                                }}
+                                            >
+                                                {code?.public_name} ({code.discountValue} {code.discountType === "percentage" ? "%" : "Rs"})
+                                            </button>
+
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                         </div>
 
@@ -440,14 +562,52 @@ const CreateProduct = () => {
                     </div>
                 </div>
             </div>
+
+
+            {openImageModal && (
+                <div className='fixed top-0 left-0 w-full h-full bg-black bg-opacity-50 flex justify-center items-center z-50'>
+                    <div className='bg-gray-800 p-6 rounded-lg w-[450px] text-white'>
+                        <div className='flex justify-between items-center mb-4'>
+                            <h2 className='text-lg font-semibold'>Enhance Product Image</h2>
+                            <X size={20} className='cursor-pointer' onClick={() => setOpenImageModal(false)} />
+                        </div>
+                        <div className='w-[300px] h-[300px] rounded-md overflow-hidden border border-gray-600'>
+                            <Image
+                                src={selectedImage}
+                                width={300}
+                                height={300}
+                                alt="selected"
+                            />
+                        </div>
+
+                        {selectedImage && (
+                            <div className='mt-4 space-y-2'>
+                                <h3 className='text-white text-sm font-semibold'>AI Enhancements</h3>
+                                <div className='grid grid-cols-2 gap-3 max-h-[250px] overflow-y-auto'>
+                                    {enhancements.map(({ label, value }) => (
+                                        <button key={value} className={`p-2 rounded-md flex items-center gap-2 ${activeEffect === value ? "bg-blue-600 text-white" : "bg-gray-600 text-gray-300"}`}
+                                            onClick={() => applyTransformation(value)}
+                                            disabled={processing}
+                                        >
+                                            <Wand size={20} /> {label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
             <div className='mt-5 flex justify-end gap-3'>
                 {isChanged && (
-                    <button type='submit' className='px-4 py-2 bg-gray-700 rounded-md' onClick={handleSaveDraft}>Save Draft</button>
+                    <button className='px-4 py-2 bg-gray-700 rounded-md' onClick={handleSaveDraft}>Save Draft</button>
                 )}
                 <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-md" disabled={loading}>{loading ? "Creating..." : "Create"}</button>
             </div>
         </form>
     )
 }
+
+
 
 export default CreateProduct

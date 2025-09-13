@@ -2,14 +2,17 @@ import { Pencil, WandSparkles, X } from 'lucide-react';
 import Image from 'next/image';
 import React from 'react'
 
-const ImagePlaceHolder = ({ size, small, onImageChange, onRemove, defaultImage = null, index = null, setOpenImageModal }: {
+const ImagePlaceHolder = ({ size, small, onImageChange, onRemove, defaultImage = null, index = null, setOpenImageModal, setSelectedImage, images, pictureUploadingLoader }: {
     size: string;
     small?: boolean;
     onImageChange: (file: File | null, index: number) => void;
     onRemove: (index: number) => void;
     defaultImage?: string | null;
     setOpenImageModal: (openImageModal: boolean) => void
-    index?: any
+    index?: any,
+    setSelectedImage: (e: string) => void,
+    images?: any,
+    pictureUploadingLoader: boolean
 }) => {
 
     const [imagePreview, setImagePreview] = React.useState<string | null>(defaultImage);
@@ -32,11 +35,16 @@ const ImagePlaceHolder = ({ size, small, onImageChange, onRemove, defaultImage =
             />
             {imagePreview ? (
                 <>
-                    <button type='button' onClick={() => onRemove?.(index)} className='absolute top-3 right-3 p-2 !rounded bg-red-600 shadow-lg'>
+                    <button type='button' disabled={pictureUploadingLoader} onClick={() => onRemove?.(index)} className='absolute top-3 right-3 p-2 !rounded bg-red-600 shadow-lg'>
                         <X size={16} />
-                    </button>
-                    <button className='absolute top-3 right-[70px] p-2 !rounded bg-blue-50 shadow-lg' onClick={() => setOpenImageModal(true)}>
-                        <WandSparkles size={16} />
+                    </button>views
+                    <button className='absolute top-3 right-[70px] p-2 !rounded bg-blue-500 shadow-lg' onClick={() => {
+                        setOpenImageModal(true)
+                        setSelectedImage(images[index].file_url)
+                    }}
+                        disabled={pictureUploadingLoader}
+                    >
+                        <WandSparkles size={16} color='white' />
                     </button>
                 </>
             ) : (
